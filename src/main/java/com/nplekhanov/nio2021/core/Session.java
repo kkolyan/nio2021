@@ -7,7 +7,7 @@ class Session implements Peer {
     ByteBuffer departure = ByteBuffer.allocate(1024 * 1024);
     boolean wantToClose;
     SessionHandler sessionHandler;
-    String remoteHost;
+    String address;
 
     @Override
     public void sendData(final OutputOp outputOp) {
@@ -21,6 +21,6 @@ class Session implements Peer {
 
     @Override
     public String toString() {
-        return "Session(0x" + Integer.toHexString(hashCode()) + ", " + remoteHost + ")";
+        return "Session(0x" + Integer.toHexString(hashCode()) + ", " + address + ")";
     }
 }

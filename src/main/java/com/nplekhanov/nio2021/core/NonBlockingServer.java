@@ -59,7 +59,7 @@ public class NonBlockingServer {
         accepted.configureBlocking(false);
         SelectionKey socketKey = accepted.register(selector, SelectionKey.OP_WRITE | SelectionKey.OP_READ);
         Session session = new Session();
-        session.remoteHost = accepted.getRemoteAddress().toString();
+        session.address = accepted.getRemoteAddress().toString();
         socketKey.attach(session);
         session.sessionHandler = sessionHandlerFactory.createSessionHandler(session);
     }
