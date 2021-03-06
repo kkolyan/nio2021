@@ -76,9 +76,9 @@ public final class NonBlockingServer implements Runnable {
         accepted.configureBlocking(false);
         SelectionKey socketKey = accepted.register(selector, SelectionKey.OP_WRITE | SelectionKey.OP_READ);
         Session session = new Session();
-        session.address = accepted.getRemoteAddress().toString();
+        session.setAddress(accepted.getRemoteAddress().toString());
         socketKey.attach(session);
-        session.sessionHandler = sessionHandlerFactory.createSessionHandler(session, bufferPool);
+        session.setSessionHandler(sessionHandlerFactory.createSessionHandler(session, bufferPool));
     }
 
     private void doIo(final SelectionKey key, final SocketChannel channel) {
@@ -86,25 +86,25 @@ public final class NonBlockingServer implements Runnable {
         try {
             if (key.isReadable()) {
                 sharedArrival.clear();
-                if (session.remainder != null) {
-                    sharedArrival.put(session.remainder);
-                    bufferPool.release(session.remainder);
-                    session.remainder = null;
+                if (session.getRemainder() != null) {
+                    sharedArrival.put(session.getRemainder());
+                    bufferPool.release(session.getRemainder());
+                    session.setRemainder(null);
                 }
                 channel.read(sharedArrival);
                 sharedArrival.flip();
-                session.sessionHandler.onReceive(sharedArrival);
+                session.getSessionHandler().onReceive(sharedArrival);
 
                 if (sharedArrival.hasRemaining()) {
                     ByteBuffer remainder = bufferPool.acquire(sharedArrival.remaining());
                     remainder.put(sharedArrival);
                     remainder.flip();
-                    session.remainder = remainder;
+                    session.setRemainder(remainder);
                 }
             }
             if (key.isWritable()) {
                 while (true) {
-                    ByteBuffer data = session.departure.peek();
+                    ByteBuffer data = session.getDeparture().peek();
                     if (data == null) {
                         break;
                     }
@@ -114,21 +114,21 @@ public final class NonBlockingServer implements Runnable {
                         data.compact();
                         break;
                     }
-                    session.departure.remove();
+                    session.getDeparture().remove();
                     bufferPool.release(data);
                 }
             }
         } catch (IOException | RuntimeException e) {
             e.printStackTrace(System.out);
-            session.wantToClose = true;
+            session.disconnect();
         }
-        if (session.wantToClose) {
+        if (session.isClosed()) {
             key.cancel();
             try {
                 channel.close();
             } catch (IOException ignored) {
             }
-            session.sessionHandler.onDisconnect();
+            session.getSessionHandler().onDisconnect();
         }
     }
 }
