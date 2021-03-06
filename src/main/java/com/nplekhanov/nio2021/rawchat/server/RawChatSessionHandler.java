@@ -1,27 +1,34 @@
 package com.nplekhanov.nio2021.rawchat.server;
 
+import com.nplekhanov.nio2021.core.BufferPool;
 import com.nplekhanov.nio2021.core.Peer;
 import com.nplekhanov.nio2021.core.SessionHandler;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
-public class RawChatSessionHandler implements SessionHandler {
+public final class RawChatSessionHandler implements SessionHandler {
 
     private final Peer peer;
     private final RawChatApplication application;
+    private final BufferPool bufferPool;
 
-    public RawChatSessionHandler(final Peer peer, final RawChatApplication application) {
+    public RawChatSessionHandler(
+        final Peer peer,
+        final RawChatApplication application,
+        final BufferPool bufferPool
+    ) {
         this.peer = peer;
         this.application = application;
+        this.bufferPool = bufferPool;
         application.getPeers().add(peer);
-        broadcast("joined: " + peer);
+        broadcast(peer + " joined");
     }
 
     @Override
     public void onDisconnect() {
         application.getPeers().remove(peer);
-        broadcast("joined: " + "left: " + peer);
+        broadcast(peer + " left");
     }
 
     @Override
@@ -30,16 +37,19 @@ public class RawChatSessionHandler implements SessionHandler {
         if (inputMessage == null) {
             return;
         }
+        if (inputMessage.equals("exit")) {
+            peer.disconnect();
+        }
 
-        broadcast("broadcast by " + peer + ": " + inputMessage);
+        broadcast(peer + ": " + inputMessage);
     }
 
     private String tryReadMessage(final ByteBuffer data) {
-        if (data.remaining() < 4) {
+        if (data.remaining() < Integer.BYTES) {
             return null;
         }
         int expected = data.getInt(data.position());
-        if (data.remaining() < expected + 4) {
+        if (data.remaining() < expected + Integer.BYTES) {
             return null;
         }
         data.getInt();
@@ -51,7 +61,9 @@ public class RawChatSessionHandler implements SessionHandler {
 
     private void broadcast(final String text) {
         for (final Peer peer : application.getPeers()) {
-            peer.sendData(out -> putIntPrefixedUtf8(text, out));
+            ByteBuffer out = bufferPool.acquire(text.length() + Integer.BYTES);
+            putIntPrefixedUtf8(text, out);
+            peer.sendData(out);
         }
     }
 

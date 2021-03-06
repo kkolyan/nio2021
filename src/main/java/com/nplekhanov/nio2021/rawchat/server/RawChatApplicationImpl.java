@@ -5,7 +5,7 @@ import com.nplekhanov.nio2021.core.Peer;
 import java.util.ArrayList;
 import java.util.Collection;
 
-public class RawChatApplicationImpl implements RawChatApplication {
+public final class RawChatApplicationImpl implements RawChatApplication {
     private final Collection<Peer> peers = new ArrayList<>();
 
     @Override

@@ -1,6 +1,7 @@
 package com.nplekhanov.nio2021.core;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.SelectableChannel;
@@ -11,47 +12,63 @@ import java.nio.channels.SocketChannel;
 import java.util.Iterator;
 import java.util.Set;
 
-public class NonBlockingServer {
-    public static void run(int port, SessionHandlerFactory sessionHandlerFactory) throws IOException {
-        Selector selector = Selector.open();
+public final class NonBlockingServer implements Runnable {
+    private final int port;
+    private final SessionHandlerFactory sessionHandlerFactory;
+    private BufferPool bufferPool;
+    private ByteBuffer sharedArrival;
 
-        ServerSocketChannel serverSocket = ServerSocketChannel.open();
-        serverSocket.configureBlocking(false);
-        serverSocket.bind(new InetSocketAddress(port));
-        serverSocket.register(selector, SelectionKey.OP_ACCEPT);
+    public NonBlockingServer(
+        final int port,
+        final SessionHandlerFactory sessionHandlerFactory
+    ) {
+        this.port = port;
+        this.sessionHandlerFactory = sessionHandlerFactory;
+    }
 
-        while (selector.isOpen()) {
+    @Override
+    public void run() {
+        try (Selector selector = Selector.open()) {
 
-            int select = selector.select(1000);
-            if (select <= 0) {
-                continue;
-            }
+            ServerSocketChannel serverSocket = ServerSocketChannel.open();
+            serverSocket.configureBlocking(false);
+            serverSocket.bind(new InetSocketAddress(port));
+            serverSocket.register(selector, SelectionKey.OP_ACCEPT);
 
-            Set<SelectionKey> selectedKeys = selector.selectedKeys();
-            for (Iterator<SelectionKey> iterator = selectedKeys.iterator(); iterator.hasNext(); ) {
-                SelectionKey key = iterator.next();
-                iterator.remove();
+            bufferPool = new BufferPool(64, 1024 * 1024);
+            sharedArrival = ByteBuffer.allocate(bufferPool.getMaxBufferSize());
 
-                SelectableChannel channel = key.channel();
+            while (selector.isOpen()) {
 
-                if (channel instanceof ServerSocketChannel) {
-                    doAccept(sessionHandlerFactory, selector, (ServerSocketChannel) channel);
+                int select = selector.select(1000);
+                if (select <= 0) {
+                    continue;
+                }
 
-                } else if (channel instanceof SocketChannel) {
-                    doIo(key, (SocketChannel) channel);
+                Set<SelectionKey> selectedKeys = selector.selectedKeys();
+                for (Iterator<SelectionKey> iterator = selectedKeys.iterator(); iterator.hasNext(); ) {
+                    SelectionKey key = iterator.next();
+                    iterator.remove();
 
-                } else {
-                    throw new IllegalStateException("channel of unsupported type: " + channel);
+                    SelectableChannel channel = key.channel();
+
+                    if (channel instanceof ServerSocketChannel) {
+                        doAccept((ServerSocketChannel) channel, selector);
+
+                    } else if (channel instanceof SocketChannel) {
+                        doIo(key, (SocketChannel) channel);
+
+                    } else {
+                        throw new IllegalStateException("channel of unsupported type: " + channel);
+                    }
                 }
             }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 
-    private static void doAccept(
-        final SessionHandlerFactory sessionHandlerFactory,
-        final Selector selector,
-        final ServerSocketChannel channel
-    ) throws IOException {
+    private void doAccept(final ServerSocketChannel channel, final Selector selector) throws IOException {
         SocketChannel accepted = channel.accept();
         if (accepted == null) {
             throw new IllegalStateException("WTF");
@@ -61,27 +78,45 @@ public class NonBlockingServer {
         Session session = new Session();
         session.address = accepted.getRemoteAddress().toString();
         socketKey.attach(session);
-        session.sessionHandler = sessionHandlerFactory.createSessionHandler(session);
+        session.sessionHandler = sessionHandlerFactory.createSessionHandler(session, bufferPool);
     }
 
-    private static void doIo(
-        final SelectionKey key,
-        final SocketChannel channel
-    ) {
+    private void doIo(final SelectionKey key, final SocketChannel channel) {
         Session session = (Session) key.attachment();
         try {
             if (key.isReadable()) {
-                ByteBuffer data = session.arrival;
-                channel.read(data);
-                data.flip();
-                session.sessionHandler.onReceive(data);
-                data.compact();
+                sharedArrival.clear();
+                if (session.remainder != null) {
+                    sharedArrival.put(session.remainder);
+                    bufferPool.release(session.remainder);
+                    session.remainder = null;
+                }
+                channel.read(sharedArrival);
+                sharedArrival.flip();
+                session.sessionHandler.onReceive(sharedArrival);
+
+                if (sharedArrival.hasRemaining()) {
+                    ByteBuffer remainder = bufferPool.acquire(sharedArrival.remaining());
+                    remainder.put(sharedArrival);
+                    remainder.flip();
+                    session.remainder = remainder;
+                }
             }
             if (key.isWritable()) {
-                ByteBuffer data = session.departure;
-                data.flip();
-                channel.write(data);
-                data.compact();
+                while (true) {
+                    ByteBuffer data = session.departure.peek();
+                    if (data == null) {
+                        break;
+                    }
+                    data.flip();
+                    channel.write(data);
+                    if (data.hasRemaining()) {
+                        data.compact();
+                        break;
+                    }
+                    session.departure.remove();
+                    bufferPool.release(data);
+                }
             }
         } catch (IOException | RuntimeException e) {
             e.printStackTrace(System.out);

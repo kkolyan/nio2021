@@ -2,15 +2,18 @@ package com.nplekhanov.nio2021.rawchat.server;
 
 import com.nplekhanov.nio2021.core.NonBlockingServer;
 
-import java.io.IOException;
-
 public class RawChatServer {
-    public static void main(String[] args) throws IOException {
+
+    private RawChatServer() {
+    }
+
+    public static void main(final String[] args) {
 
         RawChatApplication application = new RawChatApplicationImpl();
 
-        NonBlockingServer.run(8080, peer ->
-            new RawChatSessionHandler(peer, application)
+        NonBlockingServer server = new NonBlockingServer(8080, (peer, bufferPool) ->
+            new RawChatSessionHandler(peer, application, bufferPool)
         );
+        server.run();
     }
 }

@@ -8,7 +8,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 
 public class RawChatClient {
-    public static void main(String[] args) throws IOException {
+
+    private RawChatClient() {
+    }
+
+    public static void main(final String[] args) throws IOException {
         Socket socket = new Socket("localhost", 8080);
         DataInputStream in = new DataInputStream(socket.getInputStream());
         DataOutputStream out = new DataOutputStream(socket.getOutputStream());
